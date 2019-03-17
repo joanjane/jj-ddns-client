@@ -11,10 +11,10 @@ mkdir jj-ddns-client && cd jj-ddns-client && wget https://raw.githubusercontent.
 The installation will download the script `jj-ddns-client.linux.sh` and `jj-ddns-client.windows.ps1` in the folder which you run the command and start a wizard. This scripts won't be available on your global path, so be sure to run it on the choosen folder.
 
 ## Installation on windows
-Simply, create a folder of your preference and run
+Simply, create a folder of your preference and run in a powershell console with **admin privileges**:
 
 ```bash
-mkdir jj-ddns-client && cd jj-ddns-client && wget https://raw.githubusercontent.com/joanjane/jj-ddns-client/master/jj-ddns-client.windows.ps1 && ./jj-ddns-client.windows.ps1
+(mkdir jj-ddns-client); (cd jj-ddns-client); (wget https://raw.githubusercontent.com/joanjane/jj-ddns-client/master/jj-ddns-client.windows.ps1 -OutFile jj-ddns-client.windows.ps1); (./jj-ddns-client.windows.ps1)
 ```
 
 The installation will download the script `jj-ddns-client.windows.ps1` in the folder which you run the command and start a wizard.

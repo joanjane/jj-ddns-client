@@ -1,0 +1,7 @@
+*.log
+*-sample.ps1
+*.cfg
+*.bkp
+.vs
+.vscode
+*.zip

@@ -6,9 +6,9 @@
 
 #region Global variables
 readonly serviceName="jj-ddns-client.linux"
-readonly userAgent="jj-ddns-client.linux/v1.1 planetxpres@msn.com"
+readonly userAgent="jj-ddns-client.linux/v1.2 planetxpres@msn.com"
 readonly ipModes=("public" "private")
-readonly providers=("godaddy" "no-ip.com")
+readonly providers=("godaddy" "no-ip.com", "google")
 
 readonly configFile="$(dirname $0)/settings.cfg"
 readonly logFile="$(dirname $0)/dns.log"
@@ -94,6 +94,8 @@ function updateDns {
     updateDnsGoDaddy
   elif [ "$provider" == "no-ip.com" ]; then
     updateDnsNoIp
+  elif [ "$provider" == "google" ]; then
+    updateDnsGoogle
   else
     echo "$provider is not a valid value for dns provider. Run script with -w flag to run wizard"
     exit 1
@@ -115,7 +117,7 @@ function updateDnsGoDaddy {
   log "[$(date +%Y-%m-%dT%H:%M:%S)] Checking dns..." false
 
   if [ "$dnsIp" != "$currentIp" ]; then
-    log "Updating $domain dns record with $currentIp"
+    log "Updating $domain dns record with $currentIp, old ip $dnsIp"
     request='[{"data":"'$currentIp'","ttl":600}]'
     nresult=$(curl -i -s -X PUT \
       -H "$headers" \
@@ -125,6 +127,35 @@ function updateDnsGoDaddy {
   fi
 
   log "Finished check $dnsIp and $currentIp"
+}
+
+function updateDnsNoIp {
+  loadSettings
+  log "[$(date +%Y-%m-%dT%H:%M:%S)] Checking dns..." false
+  
+  dnsIp=$(host $domain | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b")
+  currentIp=$(getIp)
+
+  if [ "$dnsIp" != "$currentIp" ]; then
+    log "Updating $domain dns record with $currentIp, old ip $dnsIp"
+
+    headers="User-Agent: $userAgent"
+    uri = "http://$key:$secret@dynupdate.no-ip.com/nic/update?hostname=$domain&myip=$currentIp"
+    result=$(curl -s -X GET -H "$headers" "$uri")
+    log $result
+  fi
+  log "Finished"
+}
+
+function updateDnsGoogle {
+  loadSettings
+  
+  log "Updating $domain dns record with $currentIp" false
+  result=$(curl -i -s -X GET \
+    -H "Content-Type: application/json" \
+    -d $request "https://$key:$secret@domains.google.com/nic/update?hostname=$domain&myip=$currentIp")
+  log $result
+  log "Finished"
 }
 
 function loadSettings {
@@ -237,8 +268,8 @@ function configWizard {
     read -p "GoDaddy developer key (https://developer.godaddy.com/getstarted):$newLine" key
     read -p "GoDaddy developer secret:$newLine" secret
   else
-    read -p "no-ip user:$newLine" key
-    read -p "no-ip password:$newLine" secret
+    read -p "$provider user:$newLine" key
+    read -p "$provider password:$newLine" secret
   fi
   status="enabled"
 

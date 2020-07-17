@@ -14,9 +14,9 @@ param (
 
 #region Global variables
 $serviceName = "jj-ddns-client.windows"
-$userAgent = "jj-ddns-client.windows/v1.1 planetxpres@msn.com"
+$userAgent = "jj-ddns-client.windows/v1.2 planetxpres@msn.com"
 $ipModes = @("public", "private")
-$providers = @("godaddy", "no-ip.com")
+$providers = @("godaddy", "no-ip.com", "google")
 
 # Paths
 $invocation = (Get-Variable MyInvocation).Value
@@ -42,6 +42,9 @@ function updateDns {
   }
   elseif ($settings.provider -eq "no-ip.com") {
     updateDnsNoIp
+  }
+  elseif ($settings.provider -eq "google") {
+    updateDnsGoogle
   }
   else {
     throw "$($settings.provider) is not a valid value for dns provider. Run script with -w flag to run wizard"
@@ -128,6 +131,19 @@ function updateDnsNoIp {
   }
 
   log "Finished check $dnsIp and $currentIp"
+}
+
+
+function updateDnsGoogle {
+  log "[$([DateTime]::Now)] Updating $($settings.domain) dns record with $currentIp, old ip $dnsIp"
+  $settings = loadSettings
+  $currentIp = getIp
+  
+  $uri = "https://$($settings.key):$($settings.secret)@domains.google.com/nic/update?hostname=$($settings.domain)&myip=$currentIp"
+  $result = Invoke-RestMethod -Method GET -Uri $uri -UserAgent $userAgent
+  log $result
+
+  log "Finished updating domain"
 }
 
 function getIp {
@@ -222,8 +238,8 @@ function configWizard {
     $settings.secret = Read-Host -Prompt "GoDaddy developer secret"
   }
   else {
-    $settings.key = Read-Host -Prompt "no-ip user"
-    $settings.secret = Read-Host -Prompt "no-ip password"
+    $settings.key = Read-Host -Prompt "$($settings.provider) user"
+    $settings.secret = Read-Host -Prompt "$($settings.provider) password"
   }
 
   saveSettings $settings

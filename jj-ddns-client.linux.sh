@@ -8,7 +8,7 @@
 readonly serviceName="jj-ddns-client.linux"
 readonly userAgent="jj-ddns-client.linux/v1.1 planetxpres@msn.com"
 readonly ipModes=("public" "private")
-readonly providers=("godaddy" "no-ip.com")
+readonly providers=("godaddy" "no-ip.com" "changeip")
 
 readonly configFile="$(dirname $0)/settings.cfg"
 readonly logFile="$(dirname $0)/dns.log"
@@ -94,6 +94,8 @@ function updateDns {
     updateDnsGoDaddy
   elif [ "$provider" == "no-ip.com" ]; then
     updateDnsNoIp
+  elif [ "$provider" == "changeip" ]; then
+    updateDnsChangeip
   else
     echo "$provider is not a valid value for dns provider. Run script with -w flag to run wizard"
     exit 1
@@ -121,6 +123,24 @@ function updateDnsGoDaddy {
       -H "$headers" \
       -H "Content-Type: application/json" \
       -d $request "https://api.godaddy.com/v1/domains/$domain/records/A/$name")
+    log $nresult
+  fi
+
+  log "Finished check $dnsIp and $currentIp"
+}
+
+function updateDnsChangeip {
+  loadSettings
+
+  dnsIp=$(wget -q -O - http://ip.changeip.com:8245)
+
+  currentIp=$(getIp)
+
+  log "[$(date +%Y-%m-%dT%H:%M:%S)] Checking dns..." false
+
+  if [ "$dnsIp" != "$currentIp" ]; then
+    log "Updating $domain dns record with $currentIp"
+    nresult=$(curl "https://nic.changeip.com/nic/update?ip=$currentIp&u=$key&p=$secret&hostname=$domain")
     log $nresult
   fi
 
@@ -236,9 +256,14 @@ function configWizard {
     read -p "Subdomain name:$newLine" name
     read -p "GoDaddy developer key (https://developer.godaddy.com/getstarted):$newLine" key
     read -p "GoDaddy developer secret:$newLine" secret
-  else
+  elif [ "$provider" == "no-ip" ]; then
     read -p "no-ip user:$newLine" key
     read -p "no-ip password:$newLine" secret
+  elif [ "$provider" == "changeip" ]; then
+    read -p "changeip user:$newLine" key
+    read -p "changeip password:$newLine" secret
+  else
+    echo "Error: unsupported provider: $provider"
   fi
   status="enabled"
 

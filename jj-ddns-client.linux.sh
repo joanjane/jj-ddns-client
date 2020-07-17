@@ -6,9 +6,9 @@
 
 #region Global variables
 readonly serviceName="jj-ddns-client.linux"
-readonly userAgent="jj-ddns-client.linux/v1.2 planetxpres@msn.com"
+readonly userAgent="jj-ddns-client.linux/v1.3 planetxpres@msn.com"
 readonly ipModes=("public" "private")
-readonly providers=("godaddy" "no-ip.com", "google")
+readonly providers=("godaddy" "no-ip.com" "changeip" "google")
 
 readonly configFile="$(dirname $0)/settings.cfg"
 readonly logFile="$(dirname $0)/dns.log"
@@ -84,7 +84,6 @@ function promptOptions {
 }
 #endregion
 
-
 function updateDns {
   loadSettings
   checkDisabled
@@ -96,6 +95,8 @@ function updateDns {
     updateDnsNoIp
   elif [ "$provider" == "google" ]; then
     updateDnsGoogle
+  elif [ "$provider" == "changeip" ]; then
+    updateDnsChangeip
   else
     echo "$provider is not a valid value for dns provider. Run script with -w flag to run wizard"
     exit 1
@@ -160,6 +161,24 @@ function updateDnsGoogle {
   result=$(curl -s -X GET -H "$headers" $request)
   log "$result"
   log "Finished"
+}
+
+function updateDnsChangeip {
+  loadSettings
+
+  dnsIp=$(wget -q -O - http://ip.changeip.com:8245)
+
+  currentIp=$(getIp)
+
+  log "[$(date +%Y-%m-%dT%H:%M:%S)] Checking dns..." false
+
+  if [ "$dnsIp" != "$currentIp" ]; then
+    log "Updating $domain dns record with $currentIp"
+    result=$(curl "https://nic.changeip.com/nic/update?ip=$currentIp&u=$key&p=$secret&hostname=$domain")
+    log "$result"
+  fi
+
+  log "Finished check $dnsIp and $currentIp"
 }
 
 function loadSettings {

@@ -50,10 +50,10 @@ function snoozeUntil {
 function log {
   message=$1
   append=${2:-true}
-  if [ $append ]; then
+  if [ $append = true ]; then
     echo $message >> $logFile
   else
-  echo $message > $logFile
+    echo $message > $logFile
   fi
   echo $message
 }
@@ -123,7 +123,7 @@ function updateDnsGoDaddy {
       -H "$headers" \
       -H "Content-Type: application/json" \
       -d $request "https://api.godaddy.com/v1/domains/$domain/records/A/$name")
-    log $nresult
+    log "$nresult"
   fi
 
   log "Finished check $dnsIp and $currentIp"
@@ -132,7 +132,7 @@ function updateDnsGoDaddy {
 function updateDnsNoIp {
   loadSettings
   log "[$(date +%Y-%m-%dT%H:%M:%S)] Checking dns..." false
-  
+
   dnsIp=$(host $domain | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b")
   currentIp=$(getIp)
 
@@ -140,21 +140,25 @@ function updateDnsNoIp {
     log "Updating $domain dns record with $currentIp, old ip $dnsIp"
 
     headers="User-Agent: $userAgent"
-    uri = "http://$key:$secret@dynupdate.no-ip.com/nic/update?hostname=$domain&myip=$currentIp"
-    result=$(curl -s -X GET -H "$headers" "$uri")
-    log $result
+    request="http://$key:$secret@dynupdate.no-ip.com/nic/update?hostname=$domain&myip=$currentIp"
+
+    result=$(curl -s -X GET -H "$headers" $request)
+    log "$result"
   fi
   log "Finished"
 }
 
 function updateDnsGoogle {
   loadSettings
-  
-  log "Updating $domain dns record with $currentIp" false
-  result=$(curl -i -s -X GET \
-    -H "Content-Type: application/json" \
-    -d $request "https://$key:$secret@domains.google.com/nic/update?hostname=$domain&myip=$currentIp")
-  log $result
+
+  currentIp=$(getIp)
+  log "[$(date +%Y-%m-%dT%H:%M:%S)] Updating $domain dns record with $currentIp" false
+
+  headers="User-Agent: $userAgent"
+  request="https://$key:$secret@domains.google.com/nic/update?hostname=$domain&myip=$currentIp"
+
+  result=$(curl -s -X GET -H "$headers" $request)
+  log "$result"
   log "Finished"
 }
 
@@ -258,9 +262,9 @@ function saveSettings {
 function configWizard {
   echo "Installation wizard"
 
-  provider=$(promptOptions "Choose dns provider:" "${providers[@]}")  
+  provider=$(promptOptions "Choose dns provider:" "${providers[@]}")
   ipmode=$(promptOptions "Choose ip address kind:" "${ipModes[@]}")
-  
+
   read -p "Domain to update:$newLine" domain
 
   if [ "$provider" == "godaddy" ]; then

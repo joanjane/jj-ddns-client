@@ -1,5 +1,5 @@
 #!/bin/bash
-# Dynamic DNS client that works with GoDaddy and no-ip.com
+# Dynamic DNS client that works with GoDaddy, no-ip.com, Google Domains and ChangeIP
 # Setup wizard will store a configuration file (settings.cfg) with dns to update
 #
 # Usage: ./jj-ddns-client.linux.sh -h
@@ -108,11 +108,10 @@ function updateDnsGoDaddy {
 
   headers="Authorization: sso-key $key:$secret"
 
-  result=$(curl -s -X GET -H "$headers" \
-  "https://api.godaddy.com/v1/domains/$domain/records/A/$name")
+  checkDnsResult=$(curl -s -X GET -H "$headers" \
+    "https://api.godaddy.com/v1/domains/$domain/records/A/$name")
 
-  dnsIp=$(echo $result | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b")
-
+  dnsIp=$(echo $checkDnsResult | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b")
   currentIp=$(getIp)
 
   log "[$(date +%Y-%m-%dT%H:%M:%S)] Checking dns..." false
@@ -120,11 +119,11 @@ function updateDnsGoDaddy {
   if [ "$dnsIp" != "$currentIp" ]; then
     log "Updating $domain dns record with $currentIp, old ip $dnsIp"
     request='[{"data":"'$currentIp'","ttl":600}]'
-    nresult=$(curl -i -s -X PUT \
+    result=$(curl -i -s -X PUT \
       -H "$headers" \
       -H "Content-Type: application/json" \
       -d $request "https://api.godaddy.com/v1/domains/$domain/records/A/$name")
-    log "$nresult"
+    log "$result"
   fi
 
   log "Finished check $dnsIp and $currentIp"
@@ -134,7 +133,7 @@ function updateDnsNoIp {
   loadSettings
   log "[$(date +%Y-%m-%dT%H:%M:%S)] Checking dns..." false
 
-  dnsIp=$(host $domain | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b")
+  dnsIp=$(resolveDns $domain)
   currentIp=$(getIp)
 
   if [ "$dnsIp" != "$currentIp" ]; then
@@ -146,31 +145,37 @@ function updateDnsNoIp {
     result=$(curl -s -X GET -H "$headers" $request)
     log "$result"
   fi
-  log "Finished"
+
+  log "Finished check $dnsIp and $currentIp"
 }
 
 function updateDnsGoogle {
   loadSettings
+  log "[$(date +%Y-%m-%dT%H:%M:%S)] Checking dns..." false
 
+  dnsIp=$(resolveDns $domain)
   currentIp=$(getIp)
-  log "[$(date +%Y-%m-%dT%H:%M:%S)] Updating $domain dns record with $currentIp" false
 
-  headers="User-Agent: $userAgent"
-  request="https://$key:$secret@domains.google.com/nic/update?hostname=$domain&myip=$currentIp"
+  if [ "$dnsIp" != "$currentIp" ]; then
+    log "Updating $domain dns record with $currentIp, old ip $dnsIp"
 
-  result=$(curl -s -X GET -H "$headers" $request)
-  log "$result"
-  log "Finished"
+    headers="User-Agent: $userAgent"
+    request="https://$key:$secret@domains.google.com/nic/update?hostname=$domain&myip=$currentIp"
+
+    result=$(curl -s -X GET -H "$headers" $request)
+    log "$result"
+  fi
+
+  log "Finished check $dnsIp and $currentIp"
 }
 
 function updateDnsChangeip {
   loadSettings
-
-  dnsIp=$(wget -q -O - http://ip.changeip.com:8245)
-
-  currentIp=$(getIp)
-
+  
   log "[$(date +%Y-%m-%dT%H:%M:%S)] Checking dns..." false
+
+  dnsIp=$(resolveDns $domain)
+  currentIp=$(getIp)
 
   if [ "$dnsIp" != "$currentIp" ]; then
     log "Updating $domain dns record with $currentIp"
@@ -208,6 +213,10 @@ function getIp {
   else
     ifconfig | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -Eo '([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1'
   fi
+}
+
+function resolveDns {
+  $(host $1 | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b")
 }
 
 #region Setup

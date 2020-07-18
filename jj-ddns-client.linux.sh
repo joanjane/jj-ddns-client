@@ -1,14 +1,14 @@
 #!/bin/bash
-# Dynamic DNS client that works with GoDaddy and no-ip.com
+# Dynamic DNS client that works with Google Domains, no-ip.com, GoDaddy and ChangeIP
 # Setup wizard will store a configuration file (settings.cfg) with dns to update
 #
 # Usage: ./jj-ddns-client.linux.sh -h
 
 #region Global variables
 readonly serviceName="jj-ddns-client.linux"
-readonly userAgent="jj-ddns-client.linux/v1.1 planetxpres@msn.com"
+readonly userAgent="jj-ddns-client.linux/v1.3 planetxpres@msn.com"
 readonly ipModes=("public" "private")
-readonly providers=("godaddy" "no-ip.com" "changeip")
+readonly providers=("google" "no-ip.com" "godaddy" "changeip")
 
 readonly configFile="$(dirname $0)/settings.cfg"
 readonly logFile="$(dirname $0)/dns.log"
@@ -21,7 +21,7 @@ newLine=${newLine%.}
 function checkDisabled {
   loadSettings
   if [ $status == "disabled" ]; then
-    echo "Client status is disabled, Run script with -w flag to run wizard"
+    log "Client status is disabled, Run script with -w flag to run wizard"
     exit 1
   fi
 }
@@ -31,7 +31,7 @@ function checkSnoozed {
   now=$(date '+%Y-%m-%dT%H:%M:%S')
   if [ ! -z "$snoozeUntil" ] && [ "$snoozeUntil" \< $now ]
   then
-    echo "Client is snoozed to be run on $snoozeUntil"
+    log "Client is snoozed to be run on $snoozeUntil"
     exit 0
   fi
 }
@@ -50,10 +50,10 @@ function snoozeUntil {
 function log {
   message=$1
   append=${2:-true}
-  if [ $append ]; then
+  if [ $append = true ]; then
     echo $message >> $logFile
   else
-  echo $message > $logFile
+    echo $message > $logFile
   fi
   echo $message
 }
@@ -84,9 +84,10 @@ function promptOptions {
 }
 #endregion
 
-
 function updateDns {
   loadSettings
+  
+  log "[$(date +%Y-%m-%dT%H:%M:%S)] Starting dns check" false
   checkDisabled
   checkSnoozed
 
@@ -94,6 +95,8 @@ function updateDns {
     updateDnsGoDaddy
   elif [ "$provider" == "no-ip.com" ]; then
     updateDnsNoIp
+  elif [ "$provider" == "google" ]; then
+    updateDnsGoogle
   elif [ "$provider" == "changeip" ]; then
     updateDnsChangeip
   else
@@ -107,44 +110,85 @@ function updateDnsGoDaddy {
 
   headers="Authorization: sso-key $key:$secret"
 
-  result=$(curl -s -X GET -H "$headers" \
-  "https://api.godaddy.com/v1/domains/$domain/records/A/$name")
+  checkDnsResult=$(curl -s -X GET -H "$headers" \
+    "https://api.godaddy.com/v1/domains/$domain/records/A/$name")
 
-  dnsIp=$(echo $result | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b")
-
+  dnsIp=$(echo $checkDnsResult | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b")
   currentIp=$(getIp)
 
-  log "[$(date +%Y-%m-%dT%H:%M:%S)] Checking dns..." false
+  log "($provider) Checking dns $domain..."
 
   if [ "$dnsIp" != "$currentIp" ]; then
-    log "Updating $domain dns record with $currentIp"
+    log "Updating $domain dns record with $currentIp, old ip $dnsIp"
     request='[{"data":"'$currentIp'","ttl":600}]'
-    nresult=$(curl -i -s -X PUT \
+    result=$(curl -i -s -X PUT \
       -H "$headers" \
       -H "Content-Type: application/json" \
       -d $request "https://api.godaddy.com/v1/domains/$domain/records/A/$name")
-    log $nresult
+    log "$result"
   fi
 
-  log "Finished check $dnsIp and $currentIp"
+  log "Finished $provider check $dnsIp and $currentIp"
+}
+
+function updateDnsNoIp {
+  loadSettings
+  log "($provider) Checking dns $domain..."
+
+  dnsIp=$(resolveDns $domain)
+  currentIp=$(getIp)
+
+  if [ "$dnsIp" != "$currentIp" ]; then
+    log "Updating $domain dns record with $currentIp, old ip $dnsIp"
+    auth=`echo "$key:$secret" | base64`
+    headers="User-Agent: $userAgent\nAuthorization: Basic $auth"
+    request="http://@dynupdate.no-ip.com/nic/update?hostname=$domain&myip=$currentIp"
+    # request="http://$key:$secret@dynupdate.no-ip.com/nic/update?hostname=$domain&myip=$currentIp"
+
+    result=$(curl --raw -s -X GET -H "$headers" $request)
+    log "$result"
+  fi
+
+  log "Finished $provider check $dnsIp and $currentIp"
+}
+
+function updateDnsGoogle {
+  loadSettings
+  log "($provider) Checking dns $domain..."
+
+  dnsIp=$(resolveDns $domain)
+  currentIp=$(getIp)
+
+  if [ "$dnsIp" != "$currentIp" ]; then
+    log "Updating $domain dns record with $currentIp, old ip $dnsIp"
+
+    headers="User-Agent: $userAgent"
+    request="https://$key:$secret@domains.google.com/nic/update?hostname=$domain&myip=$currentIp"
+
+    result=$(curl --raw -s -X GET -H "$headers" $request)
+    log "$result"
+  fi
+
+  log "Finished $provider check $dnsIp and $currentIp"
 }
 
 function updateDnsChangeip {
   loadSettings
+  
+  log "($provider) Checking dns $domain..."
 
-  dnsIp=$(wget -q -O - http://ip.changeip.com:8245)
-
+  dnsIp=$(resolveDns $domain)
   currentIp=$(getIp)
-
-  log "[$(date +%Y-%m-%dT%H:%M:%S)] Checking dns..." false
 
   if [ "$dnsIp" != "$currentIp" ]; then
     log "Updating $domain dns record with $currentIp"
-    nresult=$(curl "https://nic.changeip.com/nic/update?ip=$currentIp&u=$key&p=$secret&hostname=$domain")
-    log $nresult
+    headers="User-Agent: $userAgent"
+    request="https://nic.changeip.com/nic/update?ip=$currentIp&u=$key&p=$secret&hostname=$domain"
+    result=$(curl --raw -s -X GET -H "$headers" $request)
+    log "$result"
   fi
 
-  log "Finished check $dnsIp and $currentIp"
+  log "Finished $provider check $dnsIp and $currentIp"
 }
 
 function loadSettings {
@@ -172,8 +216,12 @@ function getIp {
   if [ $ipmode == "public" ]; then
     echo $(curl ipinfo.io/ip -s)
   else
-    ifconfig | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -Eo '([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1'
+    ifconfig $interface | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -Eo '([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1'
   fi
+}
+
+function resolveDns {
+  host $1 | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b"
 }
 
 #region Setup
@@ -226,17 +274,23 @@ function currentSettingsDialog {
 
   echo "provider: $provider"
   echo "ipmode: $ipmode"
+  if [[ ! -z $interface ]]; then
+    echo "interface: $interface"
+  fi
   echo "domain: $domain"
   if [ $name ]; then
     echo "subdomain=$name"
   fi
-  echo "snoozeUntil: $snoozeUntil"
+  if [[ ! -z $snoozeUntil ]]; then
+    echo "snoozeUntil: $snoozeUntil"
+  fi
 }
 
 function saveSettings {
   echo "domain=$domain" > $configFile
   echo "name=$name" >> $configFile
   echo "ipmode=$ipmode" >> $configFile
+  echo "interface=$interface" >> $configFile
   echo "provider=$provider" >> $configFile
   echo "key=$key" >> $configFile
   echo "secret=$secret" >> $configFile
@@ -247,23 +301,20 @@ function saveSettings {
 function configWizard {
   echo "Installation wizard"
 
-  provider=$(promptOptions "Choose dns provider:" "${providers[@]}")  
+  provider=$(promptOptions "Choose dns provider:" "${providers[@]}")
   ipmode=$(promptOptions "Choose ip address kind:" "${ipModes[@]}")
-  
+  if [ "$ipmode" == "private" ]; then
+    read -p "Network Interface to track IP (ex: eth0). Check with ifconfig.$newLine" interface
+  fi
   read -p "Domain to update:$newLine" domain
 
   if [ "$provider" == "godaddy" ]; then
     read -p "Subdomain name:$newLine" name
     read -p "GoDaddy developer key (https://developer.godaddy.com/getstarted):$newLine" key
     read -p "GoDaddy developer secret:$newLine" secret
-  elif [ "$provider" == "no-ip" ]; then
-    read -p "no-ip user:$newLine" key
-    read -p "no-ip password:$newLine" secret
-  elif [ "$provider" == "changeip" ]; then
-    read -p "changeip user:$newLine" key
-    read -p "changeip password:$newLine" secret
   else
-    echo "Error: unsupported provider: $provider"
+    read -p "$provider user:$newLine" key
+    read -p "$provider password:$newLine" secret
   fi
   status="enabled"
 
@@ -275,6 +326,7 @@ function configWizard {
 # without params, update dns
 if [ ! -f $configFile ]; then
   install
+  exit 0
 elif [ "$#" == "0" ]; then
   updateDns
   exit 0

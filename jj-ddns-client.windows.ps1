@@ -1,4 +1,4 @@
-# Dynamic DNS client that works with GoDaddy and no-ip.com
+# Dynamic DNS client that works with Google Domains, no-ip.com, GoDaddy and ChangeIP
 # Setup wizard will store a configuration file (settings.cfg) with dns to update
 #
 # Usage: ./jj-ddns-client.windows.ps1 -h
@@ -14,9 +14,9 @@ param (
 
 #region Global variables
 $serviceName = "jj-ddns-client.windows"
-$userAgent = "jj-ddns-client.windows/v1.1 planetxpres@msn.com"
+$userAgent = "jj-ddns-client.windows/v1.3 planetxpres@msn.com"
 $ipModes = @("public", "private")
-$providers = @("godaddy", "no-ip.com")
+$providers = @("google", "no-ip.com", "godaddy", "changeip")
 
 # Paths
 $invocation = (Get-Variable MyInvocation).Value
@@ -27,8 +27,12 @@ $logFile = "$(Split-Path $invocation.MyCommand.Path)\dns.log"
 
 function updateDns {
   $settings = loadSettings
+  log "[$([DateTime]::Now)] - Starting dns check" -clear
+
   if (isDisabled) {
-    throw "Client status is disabled, Run script with -w flag to run wizard"
+    $fail = "Client status is disabled, Run script with -w flag to run wizard"
+    log $fail
+    throw $fail
     return
   }
 
@@ -39,17 +43,19 @@ function updateDns {
 
   if ($settings.provider -eq "godaddy") {
     updateDnsGoDaddy
-  }
-  elseif ($settings.provider -eq "no-ip.com") {
+  } elseif ($settings.provider -eq "no-ip.com") {
     updateDnsNoIp
-  }
-  else {
+  } elseif ($settings.provider -eq "google") {
+    updateDnsGoogle
+  } elseif ($settings.provider -eq "changeip") {
+    updateDnsChangeip
+  } else {
     throw "$($settings.provider) is not a valid value for dns provider. Run script with -w flag to run wizard"
   }
 }
 
 function updateDnsGoDaddy {
-  log "[$([DateTime]::Now)] Checking godaddy dns..." -clear
+  log "[$([DateTime]::Now)] Checking godaddy dns..."
   $settings = loadSettings   
 
   $uri = "https://api.godaddy.com/v1/domains/$($settings.domain)/records/A/$($settings.name)"
@@ -74,45 +80,40 @@ function updateDnsGoDaddy {
       $updateResult = Invoke-RestMethod -Method PUT -Headers $headers -Uri $uri -Body $json -ContentType "application/json" -UserAgent $userAgent
       $updateResult | Out-File -FilePath $logFile -Append
       $updateResult
-    }
-    catch {
+    } catch {
       "Error $($_.Exception.Response.StatusCode): $($_.Exception.Response.StatusDescription)" | Out-File -FilePath $logFile -Append
       throw $_.Exception
     }
   }
-  else {
-    "No need to update IP"
-  }
 
-  "Finished check $dnsIp and $currentIp" | Out-File -FilePath $logFile -Append
+  log "Finished $($settings.provider) check $dnsIp and $currentIp"
 }
 
 function updateDnsNoIp {
   # https://www.noip.com/integrate
-  log "[$([DateTime]::Now)] Checking no-ip dns..." -clear
   $settings = loadSettings
+  log "$($settings.provider) Checking dns $($settings.domain)"
 
   $currentIp = getIp
-  $dnsIp = [System.Net.Dns]::GetHostAddresses($settings.domain).IPAddressToString
+  $dnsIp = resolveDns -dns "$($settings.domain)"
       
   if ($dnsIp -ne $currentIp) {
     log "Updating $($settings.domain) dns record with $currentIp, old ip $dnsIp"
-
-    $uri = "http://$($settings.key):$($settings.secret)@dynupdate.no-ip.com/nic/update?hostname=$($settings.domain)&myip=$currentIp"
-    $result = Invoke-RestMethod -Method GET -Uri $uri -UserAgent $userAgent
+    $auth = base64 "$($settings.key):$($settings.secret)"
+    $headers = @{}
+    $headers.Add("Authorization", "Basic $auth")
+    $uri = "http://dynupdate.no-ip.com/nic/update?hostname=$($settings.domain)&myip=$currentIp"
+    $result = Invoke-RestMethod -Method GET -Uri $uri -UserAgent $userAgent -Headers $headers
 
     $result | Out-File -FilePath $logFile -Append
     if ($result.StartsWith("good")) {
       log "no-ip.com succeeded updating ip ($result)"
-    }
-    elseif ($result.StartsWith("nochg")) {
+    } elseif ($result.StartsWith("nochg")) {
       log "no-ip.com ip update was not needed ($result)"
-    }
-    elseif ($result.StartsWith("911")) {
+    } elseif ($result.StartsWith("911")) {
       log "no-ip.com is down, snoozing client during 30 minutes ($result)"
       snoozeUntil [DateTime]::Now.AddMinutes(30)
-    }
-    elseif (
+    } elseif (
       $result.StartsWith("nohost") -or 
       $result.StartsWith("badauth") -or 
       $result.StartsWith("badagent") -or 
@@ -123,22 +124,57 @@ function updateDnsNoIp {
       disableClient
     }
   }
-  else {
-      "No need to update IP"
+  log "Finished $($settings.provider) check $dnsIp and $currentIp"
+}
+
+function updateDnsGoogle {
+  $settings = loadSettings
+  log "$($settings.provider) Checking dns $($settings.domain)"
+
+  $currentIp = getIp
+  $settings.domain
+  $dnsIp = resolveDns -dns "$($settings.domain)"
+  
+  if ($dnsIp -ne $currentIp) {
+    log "Updating $($settings.domain) dns record with $currentIp, old ip $dnsIp"
+    
+    $uri = "https://$($settings.key):$($settings.secret)@domains.google.com/nic/update?hostname=$($settings.domain)&myip=$currentIp"
+    $result = Invoke-RestMethod -Method GET -Uri $uri -UserAgent $userAgent
+    log $result
   }
 
-  log "Finished check $dnsIp and $currentIp"
+  log "Finished $($settings.provider) check $dnsIp and $currentIp"
+}
+
+function updateDnsChangeip {
+  $settings = loadSettings
+  log "$($settings.provider) Checking dns $($settings.domain)"
+  
+  $currentIp = getIp
+  $dnsIp = resolveDns -dns "$($settings.domain)"
+
+  if ($dnsIp -ne $currentIp) {
+    $uri = "https://nic.changeip.com/nic/update?ip=$currentIp&u=$($settings.key)&p=$($settings.secret)&hostname=$($settings.domain)"
+    $result = Invoke-RestMethod -Method GET -Uri $uri -UserAgent $userAgent
+    log $result
+  }
+
+  log "Finished $($settings.provider) check $dnsIp and $currentIp"
 }
 
 function getIp {
-  if ((loadSettings).ipmode -eq "public") {
+  $settings = loadSettings
+  if ($settings.ipmode -eq "public") {
     $webClient = New-Object System.Net.WebClient
     $ip = $webClient.DownloadString('http://ipinfo.io/ip')
-  }
-  else {
-    $ip = (Test-Connection -ComputerName (hostname) -Count 1  | Select-Object -ExpandProperty IPV4Address).IPAddressToString
+  } else {
+    $ip = $(Get-NetIPAddress -InterfaceAlias $settings.interface -AddressFamily  IPv4).IpAddress
   }
   $ip.Trim()
+}
+
+function resolveDns($dns) {
+  [System.Net.Dns]::GetHostAddresses($dns).IPAddressToString
 }
 
 #region Setup
@@ -193,6 +229,9 @@ function currentSettingsDialog {
 
   "provider: $($settings.provider)"
   "ipmode: $($settings.ipmode)"
+  if ($settings.interface -ne "") {
+    "interface: $($settings.interface)"
+  }
   "domain: $($settings.domain)"
   if (![string]::IsNullOrWhiteSpace($settings.name)) {
     "subdomain: $($settings.name)"
@@ -213,8 +252,9 @@ function configWizard {
   $settings.snoozeUntil = $null
   $settings.provider = promptOptions -options $providers -prompt "Choose dns provider"
   $settings.provider
-  $settings.ipKind = promptOptions -options $ipModes -prompt "Choose ip address kind"
+  $settings.ipmode = promptOptions -options $ipModes -prompt "Choose ip address kind"
 
+  $settings.interface = Read-Host -Prompt "Network Interface Alias to track IP (ex: Wi-Fi). Check with Get-NetIPAddress."
   $settings.domain = Read-Host -Prompt "Domain to update"
   if ($settings.provider -eq "godaddy") {
     $settings.name = Read-Host -Prompt "Subdomain name"
@@ -222,8 +262,8 @@ function configWizard {
     $settings.secret = Read-Host -Prompt "GoDaddy developer secret"
   }
   else {
-    $settings.key = Read-Host -Prompt "no-ip user"
-    $settings.secret = Read-Host -Prompt "no-ip password"
+    $settings.key = Read-Host -Prompt "$($settings.provider) user"
+    $settings.secret = Read-Host -Prompt "$($settings.provider) password"
   }
 
   saveSettings $settings
@@ -232,7 +272,8 @@ function configWizard {
 function saveSettings($settings) {
   "domain=$($settings.domain)" > $configFile
   "name=$($settings.name)" >> $configFile
-  "ipmode=$($settings.ipKind)" >> $configFile
+  "ipmode=$($settings.ipmode)" >> $configFile
+  "interface=$($settings.interface)" >> $configFile
   "provider=$($settings.provider)" >> $configFile
   "key=$($settings.key)" >> $configFile
   "secret=$($settings.secret)" >> $configFile
@@ -260,7 +301,7 @@ function addCron {
 
   $task = Register-ScheduledTask -Action $action -Trigger $trigger -TaskName $serviceName -Settings $taskSettings -Description "Dynamic DNS Client" -Principal $principal
 
-  "Installed ddns client to on between 15 min. intervals."
+  "Installed ddns client to run in 15 min. intervals."
 }
 
 function disableClient {
@@ -310,6 +351,12 @@ function isNumeric ($value) {
   return $value -match "^[\d\.]+$"
 }
 
+function base64 ($value) {
+  [Convert]::ToBase64String(
+    [System.Text.Encoding]::Unicode.GetBytes($value)
+  )
+}
+
 function log($message, [switch]$clear) {
   if ($clear) {
     "" | Out-File -FilePath $logFile -NoNewline
@@ -321,10 +368,10 @@ function log($message, [switch]$clear) {
 
 #region Main
 # Without params, update dns
-if (-not (Test-Path $configFile)) {
+if (-not (Test-Path $configFile) -and (! $h)) {
   install
-}
-elseif ($PSBoundParameters.Count -eq 0) {
+  return
+} elseif ($PSBoundParameters.Count -eq 0) {
   updateDns
   return
 }
@@ -332,20 +379,15 @@ elseif ($PSBoundParameters.Count -eq 0) {
 # Run switches
 if ($w) {
   install
-}
-elseif ($u) {
+} elseif ($u) {
   confirmUninstall
-}
-elseif ($s) {
+} elseif ($s) {
   currentSettingsDialog
-}
-elseif ($i) {
+} elseif ($i) {
   getIp
-}
-elseif ($h) {
+} elseif ($h) {
   helpDialog
-}
-else {
+} else {
   "Invalid option: $($args[0])"
 }
 #endregion
